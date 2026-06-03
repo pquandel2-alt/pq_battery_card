@@ -59,6 +59,8 @@ class BatteryCard extends HTMLElement {
       exclude: [],
       ...config,
     };
+    this._config.entities = this._config.entities || [];
+    this._config.exclude  = this._config.exclude  || [];
     delete this._lastKey;
   }
 
@@ -292,6 +294,8 @@ class BatteryCardEditor extends HTMLElement {
       border_radius: 16, icon_size: 22, entities: [], exclude: [],
       ...config,
     };
+    this._config.entities = this._config.entities || [];
+    this._config.exclude  = this._config.exclude  || [];
     this._render();
   }
 
