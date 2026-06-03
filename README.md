@@ -1,10 +1,10 @@
 # 🔋 Battery Card
 
-Eine übersichtliche Lovelace-Karte für Home Assistant im Glasmorphism-Stil. Zeigt alle Batterie-Sensoren auf einen Blick – mit dynamischem Icon je nach Ladestand, farbigem Balken und automatischer Erkennung aller Batterie-Entitäten.
+Eine übersichtliche Lovelace-Karte für Home Assistant im Glasmorphism-Stil. Zeigt alle Batterie-Sensoren auf einen Blick – mit dynamischem Icon je nach Ladestand, farbigem Balken und einem visuellen Editor zur einfachen Verwaltung.
 
 ## ✨ Features
 
-- **Automatische Erkennung** – findet alle Sensoren mit `device_class: battery` ohne manuelle Konfiguration
+- **Visueller Editor** – Geräte per Knopfdruck automatisch laden oder einzeln hinzufügen, kein YAML nötig
 - **Dynamisches Batterie-Icon** – wechselt von `mdi:battery` bis `mdi:battery-alert` je nach Ladestand
 - **Farbkodierung** – Grün (>60%) → Gelb (>40%) → Orange (>20%) → Rot (≤20%)
 - **Ladebalken** – kompakter Fortschrittsbalken pro Gerät
@@ -13,7 +13,6 @@ Eine übersichtliche Lovelace-Karte für Home Assistant im Glasmorphism-Stil. Ze
 - **Sortierung** – nach Ladestand (niedrigster zuerst), absteigend oder alphabetisch
 - **1–3 Spalten** – kompaktes Grid für viele Geräte
 - **Max. Höhe** – scrollbare Liste bei vielen Einträgen
-- **Visueller Editor** – alles per Maske einstellbar, kein YAML nötig
 - **Glasmorphism-Design** – passend zu den anderen Widgets
 
 ## 📦 Installation
@@ -36,36 +35,41 @@ Eine übersichtliche Lovelace-Karte für Home Assistant im Glasmorphism-Stil. Ze
 
 ## ⚙️ Konfiguration
 
-### Minimal – alle Batterien automatisch
+### Über den visuellen Editor (empfohlen)
+
+1. Karte hinzufügen → **Battery Card** auswählen
+2. Auf **„Alle Batterien automatisch laden"** klicken – alle erkannten Batterie-Sensoren werden in die Liste geladen
+3. Einzelne Geräte über **×** entfernen oder weitere über das Suchfeld manuell hinzufügen
+
+### Per YAML
+
+#### Minimal – Geräte manuell angeben
 
 ```yaml
 type: custom:battery-card
+entities:
+  - sensor.tursensor_schlafzimmer_battery
+  - sensor.bewegungsmelder_flur_battery
 ```
 
-### Nur kritische Batterien anzeigen
+#### Nur kritische Batterien anzeigen
 
 ```yaml
 type: custom:battery-card
+entities:
+  - sensor.tursensor_schlafzimmer_battery
+  - sensor.bewegungsmelder_flur_battery
 min_level_filter: 20
 title: Kritische Batterien
 ```
 
-### Manuell – bestimmte Geräte
+#### Vollständig
 
 ```yaml
 type: custom:battery-card
-auto_add: false
 entities:
   - sensor.tursensor_schlafzimmer_battery
   - sensor.bewegungsmelder_flur_battery
-  - sensor.fernbedienung_wohnzimmer_battery
-```
-
-### Vollständig
-
-```yaml
-type: custom:battery-card
-auto_add: true
 title: Batterien
 show_header: true
 show_bar: true
@@ -81,8 +85,7 @@ icon_size: 22
 
 | Option | Typ | Standard | Beschreibung |
 |---|---|---|---|
-| `auto_add` | boolean | `true` | Alle Batterie-Sensoren automatisch hinzufügen |
-| `entities` | liste | `[]` | Manuelle Entitätsliste (wenn `auto_add: false`) |
+| `entities` | liste | `[]` | Liste der anzuzeigenden Batterie-Sensoren |
 | `title` | string | `Batterien` | Titel in der Kopfzeile |
 | `show_header` | boolean | `true` | Kopfzeile mit Titel und Zähler anzeigen |
 | `show_bar` | boolean | `true` | Ladebalken anzeigen |
@@ -109,15 +112,6 @@ icon_size: 22
 | `asc` | Niedrigster Ladestand zuerst (Standard – kritische Geräte oben) |
 | `desc` | Höchster Ladestand zuerst |
 | `name` | Alphabetisch nach Gerätename |
-
-## 🔍 Automatische Erkennung
-
-Die Karte erkennt automatisch alle Entitäten mit `device_class: battery`. Das sind typischerweise Sensoren von:
-- Zigbee-/Z-Wave-Geräten (Tür-/Fenstersensoren, Bewegungsmelder, Fernbedienungen)
-- Bluetooth-Geräten
-- Integrations wie AVM FRITZ!, Xiaomi, IKEA Tradfri u.v.m.
-
-Im visuellen Editor werden im manuellen Modus **ausschließlich** Batterie-Sensoren zur Auswahl angeboten.
 
 ## 🔗 Verwandte Projekte
 
