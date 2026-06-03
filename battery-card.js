@@ -1,5 +1,5 @@
 // =====================================================================
-//  Battery Card v1.0.0
+//  Battery Card v1.0.3
 // =====================================================================
 
 function getBatteryIcon(level) {
@@ -48,19 +48,16 @@ class BatteryCard extends HTMLElement {
       title: 'Batterien',
       show_header: true,
       show_bar: true,
-      auto_add: true,
       columns: 1,
       sort: 'asc',
       max_height: 0,
       min_level_filter: null,
       border_radius: 16,
       icon_size: 22,
-      entities: [],
-      exclude: [],
       ...config,
     };
-    this._config.entities = this._config.entities || [];
-    this._config.exclude  = this._config.exclude  || [];
+    // Sicherstellen dass entities immer ein Array ist
+    if (!Array.isArray(this._config.entities)) this._config.entities = [];
     delete this._lastKey;
   }
 
@@ -69,10 +66,15 @@ class BatteryCard extends HTMLElement {
   _getBatteries() {
     if (!this._hass) return [];
 
-    const excluded = this._config.exclude || [];
-    const entityIds = this._config.auto_add
-      ? getAllBatteryEntities(this._hass).filter(id => !excluded.includes(id))
-      : (this._config.entities || []).map(e => typeof e === 'string' ? e : e.entity).filter(Boolean);
+    // Rückwärtskompatibilität: auto_add:true ohne entities → alle erkennen
+    let entityIds;
+    if (this._config.auto_add && this._config.entities.length === 0) {
+      entityIds = getAllBatteryEntities(this._hass);
+    } else {
+      entityIds = this._config.entities
+        .map(e => (typeof e === 'string' ? e : e?.entity))
+        .filter(Boolean);
+    }
 
     const batteries = entityIds.map(id => {
       const st = this._hass.states[id];
@@ -87,7 +89,6 @@ class BatteryCard extends HTMLElement {
       };
     }).filter(Boolean);
 
-    // Filter unter bestimmtem Level
     const minFilter = this._config.min_level_filter;
     const filtered = batteries.filter(b => {
       if (b.unavailable || b.level === null) return true;
@@ -97,7 +98,6 @@ class BatteryCard extends HTMLElement {
       return true;
     });
 
-    // Sortierung
     return filtered.sort((a, b) => {
       if (this._config.sort === 'name') return a.name.localeCompare(b.name);
       const la = a.level ?? (this._config.sort === 'asc' ? 999 : -1);
@@ -113,7 +113,7 @@ class BatteryCard extends HTMLElement {
 
   static getConfigElement() { return document.createElement('battery-card-editor'); }
   static getStubConfig() {
-    return { auto_add: true, show_header: true, columns: 1, sort: 'asc', title: 'Batterien' };
+    return { entities: [], show_header: true, columns: 1, sort: 'asc', title: 'Batterien' };
   }
 
   _render() {
@@ -237,12 +237,12 @@ class BatteryCard extends HTMLElement {
           <div class="header">
             <span class="title">${this._config.title || 'Batterien'}</span>
             <span class="badge ${critical > 0 ? 'badge-critical' : 'badge-ok'}">
-              ${critical > 0 ? `⚠ ${critical} kritisch` : `${total} Geräte`}
+              ${critical > 0 ? `&#9888; ${critical} kritisch` : `${total} Ger&auml;te`}
             </span>
           </div>
         ` : ''}
         ${batteries.length === 0
-          ? `<div class="empty">Keine Batterie-Entitäten gefunden</div>`
+          ? `<div class="empty">Keine Batterie-Entit&auml;ten konfiguriert</div>`
           : `<div class="grid">
               ${batteries.map(b => {
                 const color = getBatteryColor(b.level);
@@ -261,7 +261,7 @@ class BatteryCard extends HTMLElement {
                       ` : ''}
                     </div>
                     <span class="level" style="color:${color};">
-                      ${b.unavailable ? '–' : b.level !== null ? `${b.level}%` : '?'}
+                      ${b.unavailable ? '&ndash;' : b.level !== null ? `${b.level}%` : '?'}
                     </span>
                   </div>
                 `;
@@ -282,211 +282,183 @@ class BatteryCardEditor extends HTMLElement {
   constructor() {
     super();
     this.attachShadow({ mode: 'open' });
-    this._config = {};
+    this._config = { entities: [] };
+    this._hass = null;
     this._rendered = false;
   }
 
   setConfig(config) {
-    this._config = {
-      title: 'Batterien', show_header: true, show_bar: true,
-      auto_add: true, columns: 1, sort: 'asc',
-      max_height: 0, min_level_filter: null,
-      border_radius: 16, icon_size: 22, entities: [], exclude: [],
-      ...config,
-    };
-    this._config.entities = this._config.entities || [];
-    this._config.exclude  = this._config.exclude  || [];
-    this._render();
+    this._config = { ...config };
+    if (!Array.isArray(this._config.entities)) this._config.entities = [];
+    if (this._rendered) {
+      this._updateEntityList();
+      this._updatePicker();
+    } else {
+      this._render();
+    }
   }
 
   set hass(hass) {
     this._hass = hass;
-    if (!this._rendered) this._render();
-    else this._renderEntityList();
+    if (!this._rendered) {
+      this._render();
+    } else {
+      this._updateEntityList();
+      this._updatePicker();
+    }
   }
 
   _emit() {
     this.dispatchEvent(new CustomEvent('config-changed', {
-      detail: { config: this._config }, bubbles: true, composed: true,
+      detail: { config: { ...this._config } },
+      bubbles: true,
+      composed: true,
     }));
   }
 
-  // ---- Hilfsfunktion: Batterie-Zeile bauen ----
-  _buildRow(entityId, actionIcon, actionTitle, actionColor, onAction) {
-    const st    = this._hass?.states[entityId];
-    const fn    = st?.attributes.friendly_name || entityId;
-    const level = parseFloat(st?.state);
-    const color = getBatteryColor(isNaN(level) ? null : level);
-
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;background:var(--secondary-background-color,#f5f5f5);';
-
-    const ic = document.createElement('ha-icon');
-    ic.icon = getBatteryIcon(isNaN(level) ? null : level);
-    ic.style.cssText = `--mdc-icon-size:18px;color:${color};flex-shrink:0;`;
-
-    const name = document.createElement('span');
-    name.textContent = fn;
-    name.style.cssText = 'flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
-
-    const lvl = document.createElement('span');
-    lvl.textContent = isNaN(level) ? '?' : `${Math.round(level)}%`;
-    lvl.style.cssText = `font-size:12px;font-weight:600;color:${color};min-width:32px;text-align:right;`;
-
-    const btn = document.createElement('button');
-    btn.textContent = actionIcon;
-    btn.title = actionTitle;
-    btn.style.cssText = `background:none;border:none;cursor:pointer;color:${actionColor};font-size:17px;padding:0 3px;line-height:1;flex-shrink:0;`;
-    btn.addEventListener('click', onAction);
-
-    row.appendChild(ic);
-    row.appendChild(name);
-    row.appendChild(lvl);
-    row.appendChild(btn);
-    return row;
+  _getEntities() {
+    return (this._config.entities || [])
+      .map(e => (typeof e === 'string' ? e : e?.entity))
+      .filter(Boolean);
   }
 
-  _renderEntityList() {
-    const root = this.shadowRoot;
-    const list = root.getElementById('entityList');
+  _updateEntityList() {
+    const list = this.shadowRoot.getElementById('entityList');
     if (!list) return;
     list.innerHTML = '';
 
-    if (this._config.auto_add) {
-      // AUTO-MODUS: alle erkannten Batterien zeigen, ausgeschlossene separat
-      const allBatteries = this._hass ? getAllBatteryEntities(this._hass) : [];
-      const excluded = this._config.exclude || [];
-      const visible  = allBatteries.filter(id => !excluded.includes(id));
-      const hidden   = allBatteries.filter(id =>  excluded.includes(id));
-
-      if (allBatteries.length === 0) {
-        list.innerHTML = '<div style="font-size:11px;color:var(--secondary-text-color,#888);">Keine Batterie-Sensoren gefunden.</div>';
-        return;
-      }
-
-      // Aktive Geräte
-      const visLabel = document.createElement('div');
-      visLabel.style.cssText = 'font-size:11px;font-weight:600;color:var(--secondary-text-color,#727272);margin-bottom:4px;';
-      visLabel.textContent = `Sichtbar (${visible.length})`;
-      list.appendChild(visLabel);
-
-      if (visible.length === 0) {
-        const empty = document.createElement('div');
-        empty.style.cssText = 'font-size:11px;color:var(--secondary-text-color,#aaa);padding:4px 0;';
-        empty.textContent = 'Alle ausgeblendet.';
-        list.appendChild(empty);
-      }
-      visible.forEach(id => {
-        list.appendChild(this._buildRow(id, '×', 'Ausblenden', 'var(--error-color,#f44336)', () => {
-          this._config = { ...this._config, exclude: [...(this._config.exclude || []), id] };
-          this._emit();
-          this._renderEntityList();
-        }));
-      });
-
-      // Ausgeblendete Geräte
-      if (hidden.length > 0) {
-        const hidLabel = document.createElement('div');
-        hidLabel.style.cssText = 'font-size:11px;font-weight:600;color:var(--secondary-text-color,#727272);margin:10px 0 4px;';
-        hidLabel.textContent = `Ausgeblendet (${hidden.length})`;
-        list.appendChild(hidLabel);
-
-        hidden.forEach(id => {
-          list.appendChild(this._buildRow(id, '↩', 'Wieder einblenden', 'var(--primary-color,#03a9f4)', () => {
-            this._config = { ...this._config, exclude: (this._config.exclude || []).filter(e => e !== id) };
-            this._emit();
-            this._renderEntityList();
-          }));
-        });
-      }
-
-    } else {
-      // MANUELLER MODUS: nur hinzugefügte Entitäten zeigen
-      if (this._config.entities.length === 0) {
-        list.innerHTML = '<div style="font-size:11px;color:var(--secondary-text-color,#888);">Noch keine Entitäten hinzugefügt.</div>';
-        return;
-      }
-      this._config.entities.forEach((raw, i) => {
-        const entityId = typeof raw === 'string' ? raw : raw.entity;
-        list.appendChild(this._buildRow(entityId, '×', 'Entfernen', 'var(--error-color,#f44336)', () => {
-          const ents = [...this._config.entities];
-          ents.splice(i, 1);
-          this._config = { ...this._config, entities: ents };
-          this._emit();
-          this._renderEntityList();
-        }));
-      });
+    const entities = this._getEntities();
+    if (entities.length === 0) {
+      const empty = document.createElement('div');
+      empty.style.cssText = 'font-size:12px;color:var(--secondary-text-color,#888);padding:4px 0;';
+      empty.textContent = 'Noch keine Geräte hinzugefügt.';
+      list.appendChild(empty);
+      return;
     }
+
+    entities.forEach((entityId, i) => {
+      const st    = this._hass?.states[entityId];
+      const fn    = st?.attributes?.friendly_name || entityId;
+      const raw   = parseFloat(st?.state);
+      const level = isNaN(raw) ? null : Math.round(raw);
+      const color = getBatteryColor(level);
+
+      const row = document.createElement('div');
+      row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:6px 8px;border-radius:8px;background:var(--secondary-background-color,#f5f5f5);margin-bottom:4px;';
+
+      const ic = document.createElement('ha-icon');
+      ic.setAttribute('icon', getBatteryIcon(level));
+      ic.style.cssText = `--mdc-icon-size:18px;color:${color};flex-shrink:0;`;
+
+      const nameEl = document.createElement('span');
+      nameEl.textContent = fn;
+      nameEl.style.cssText = 'flex:1;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;';
+
+      const lvlEl = document.createElement('span');
+      lvlEl.textContent = level !== null ? `${level}%` : '?';
+      lvlEl.style.cssText = `font-size:12px;font-weight:600;color:${color};min-width:32px;text-align:right;flex-shrink:0;`;
+
+      const btn = document.createElement('button');
+      btn.textContent = '×';
+      btn.title = 'Entfernen';
+      btn.style.cssText = 'background:none;border:none;cursor:pointer;color:var(--error-color,#f44336);font-size:18px;padding:0 2px;line-height:1;flex-shrink:0;';
+      btn.addEventListener('click', () => {
+        const ents = this._getEntities();
+        ents.splice(i, 1);
+        this._config = { ...this._config, entities: ents };
+        this._emit();
+        this._updateEntityList();
+        this._updatePicker();
+      });
+
+      row.appendChild(ic);
+      row.appendChild(nameEl);
+      row.appendChild(lvlEl);
+      row.appendChild(btn);
+      list.appendChild(row);
+    });
   }
 
-  _buildBatteryPicker(container) {
+  _updatePicker() {
+    const container = this.shadowRoot.getElementById('pickerContainer');
+    if (!container) return;
     container.innerHTML = '';
-    const hass = this._hass;
-    const batteryEntities = hass
-      ? Object.keys(hass.states)
-          .filter(id => hass.states[id]?.attributes?.device_class === 'battery'
-            && !this._config.entities.some(e => (typeof e === 'string' ? e : e.entity) === id))
-          .sort((a, b) => parseFloat(hass.states[a].state) - parseFloat(hass.states[b].state))
-      : [];
+    if (!this._hass) return;
+
+    const current = this._getEntities();
+    const available = getAllBatteryEntities(this._hass)
+      .filter(id => !current.includes(id))
+      .sort((a, b) => {
+        const la = parseFloat(this._hass.states[a]?.state);
+        const lb = parseFloat(this._hass.states[b]?.state);
+        return (isNaN(la) ? 999 : la) - (isNaN(lb) ? 999 : lb);
+      });
 
     const wrapper = document.createElement('div');
-    wrapper.style.cssText = 'position:relative;margin-top:8px;';
+    wrapper.style.cssText = 'position:relative;';
 
-    const row = document.createElement('div');
-    row.style.cssText = 'display:flex;align-items:center;gap:8px;border:1px dashed var(--divider-color,#ccc);border-radius:8px;background:var(--card-background-color,#fff);padding:6px 10px;';
+    const inputRow = document.createElement('div');
+    inputRow.style.cssText = 'display:flex;align-items:center;gap:8px;border:1px dashed var(--divider-color,#ccc);border-radius:8px;background:var(--card-background-color,#fff);padding:6px 10px;';
 
     const input = document.createElement('input');
     input.type = 'text';
-    input.placeholder = `+ Batterie-Sensor hinzufügen… (${batteryEntities.length} verfügbar)`;
+    input.placeholder = available.length > 0
+      ? `+ Batterie-Sensor hinzufügen… (${available.length} verfügbar)`
+      : 'Alle Batterie-Sensoren bereits hinzugefügt';
     input.style.cssText = 'flex:1;border:none;outline:none;background:transparent;color:var(--primary-text-color,#212121);font-size:13px;';
-    row.appendChild(input);
+    if (available.length === 0) input.disabled = true;
+    inputRow.appendChild(input);
 
     const dropdown = document.createElement('div');
     dropdown.style.cssText = 'position:absolute;top:100%;left:0;right:0;max-height:220px;overflow-y:auto;background:var(--card-background-color,#fff);border:1px solid var(--divider-color,#e0e0e0);border-radius:8px;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.15);display:none;margin-top:2px;';
 
-    const showDropdown = (filter = '') => {
+    const showDropdown = (filter) => {
       dropdown.innerHTML = '';
-      const lower = filter.toLowerCase().trim();
-      const filtered = batteryEntities.filter(e => {
-        const fn = (hass?.states[e]?.attributes.friendly_name || '').toLowerCase();
-        return !lower || fn.includes(lower) || e.toLowerCase().includes(lower);
+      const lower = (filter || '').toLowerCase().trim();
+      const filtered = available.filter(id => {
+        const fn = (this._hass?.states[id]?.attributes?.friendly_name || '').toLowerCase();
+        return !lower || fn.includes(lower) || id.toLowerCase().includes(lower);
       });
       if (filtered.length === 0) {
         dropdown.innerHTML = '<div style="padding:10px;font-size:12px;color:#888;">Keine weiteren Batterie-Sensoren.</div>';
         dropdown.style.display = 'block';
         return;
       }
-      filtered.forEach(e => {
-        const fn    = hass?.states[e]?.attributes.friendly_name || '';
-        const level = parseFloat(hass?.states[e]?.state);
-        const color = getBatteryColor(isNaN(level) ? null : level);
-        const item  = document.createElement('div');
+      filtered.forEach(id => {
+        const fn    = this._hass?.states[id]?.attributes?.friendly_name || id;
+        const raw   = parseFloat(this._hass?.states[id]?.state);
+        const level = isNaN(raw) ? null : Math.round(raw);
+        const color = getBatteryColor(level);
+
+        const item = document.createElement('div');
         item.style.cssText = 'display:flex;align-items:center;gap:10px;padding:7px 10px;cursor:pointer;border-bottom:1px solid var(--divider-color,#f0f0f0);';
 
         const ic = document.createElement('ha-icon');
-        ic.icon = getBatteryIcon(isNaN(level) ? null : level);
+        ic.setAttribute('icon', getBatteryIcon(level));
         ic.style.cssText = `--mdc-icon-size:18px;color:${color};flex-shrink:0;`;
 
         const txt = document.createElement('div');
         txt.style.cssText = 'flex:1;min-width:0;';
-        txt.innerHTML = `<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${fn||e}</div><div style="font-size:10px;color:var(--secondary-text-color,#727272)">${e}</div>`;
+        txt.innerHTML = `<div style="font-size:12px;font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${fn}</div><div style="font-size:10px;color:var(--secondary-text-color,#727272)">${id}</div>`;
 
         const lvl = document.createElement('span');
-        lvl.textContent = isNaN(level) ? '?' : `${Math.round(level)}%`;
-        lvl.style.cssText = `font-size:12px;font-weight:600;color:${color};`;
+        lvl.textContent = level !== null ? `${level}%` : '?';
+        lvl.style.cssText = `font-size:12px;font-weight:600;color:${color};flex-shrink:0;`;
 
-        item.appendChild(ic); item.appendChild(txt); item.appendChild(lvl);
+        item.appendChild(ic);
+        item.appendChild(txt);
+        item.appendChild(lvl);
+        item.addEventListener('mouseover', () => { item.style.background = 'var(--secondary-background-color,#f5f5f5)'; });
+        item.addEventListener('mouseout',  () => { item.style.background = ''; });
         item.addEventListener('mousedown', ev => {
           ev.preventDefault();
           input.value = '';
           dropdown.style.display = 'none';
-          this._config = { ...this._config, entities: [...this._config.entities, { entity: e }] };
+          this._config = { ...this._config, entities: [...this._getEntities(), id] };
           this._emit();
-          this._renderEntityList();
-          this._buildBatteryPicker(container);
+          this._updateEntityList();
+          this._updatePicker();
         });
-        item.addEventListener('mouseover', () => item.style.background = 'var(--secondary-background-color,#f5f5f5)');
-        item.addEventListener('mouseout',  () => item.style.background = '');
         dropdown.appendChild(item);
       });
       dropdown.style.display = 'block';
@@ -496,7 +468,7 @@ class BatteryCardEditor extends HTMLElement {
     input.addEventListener('input', () => showDropdown(input.value));
     input.addEventListener('blur',  () => setTimeout(() => { dropdown.style.display = 'none'; }, 150));
 
-    wrapper.appendChild(row);
+    wrapper.appendChild(inputRow);
     wrapper.appendChild(dropdown);
     container.appendChild(wrapper);
   }
@@ -508,40 +480,45 @@ class BatteryCardEditor extends HTMLElement {
 
     root.innerHTML = `
       <style>
-        .editor{display:flex;flex-direction:column;gap:14px;padding:8px 0;}
-        .field{display:flex;flex-direction:column;gap:5px;}
-        .row{display:flex;gap:12px;} .row .field{flex:1;}
-        label{font-size:13px;font-weight:500;color:var(--primary-text-color,#212121);}
-        .hint{font-size:11px;color:var(--secondary-text-color,#727272);}
-        input[type=text],input[type=number],select{
-          padding:9px 11px;border-radius:8px;border:1px solid var(--divider-color,#e0e0e0);
-          background:var(--card-background-color,#fff);color:var(--primary-text-color,#212121);
-          font-size:13px;outline:none;box-sizing:border-box;width:100%;}
-        input[type=text]:focus,input[type=number]:focus,select:focus{border-color:var(--primary-color,#03a9f4);}
-        .toggle-row{display:flex;align-items:center;justify-content:space-between;padding:4px 0;}
-        .toggle-row label{flex:1;}
-        .section{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px;
-          color:var(--secondary-text-color,#727272);margin-top:6px;
-          border-bottom:1px solid var(--divider-color,#e0e0e0);padding-bottom:4px;}
-        #entityList{display:flex;flex-direction:column;gap:5px;}
-        #pickerContainer{}
+        .editor { display:flex; flex-direction:column; gap:14px; padding:8px 0; }
+        .section { font-size:11px; font-weight:700; text-transform:uppercase; letter-spacing:0.6px;
+          color:var(--secondary-text-color,#727272); margin-top:6px;
+          border-bottom:1px solid var(--divider-color,#e0e0e0); padding-bottom:4px; }
+        .field { display:flex; flex-direction:column; gap:5px; }
+        .row { display:flex; gap:12px; }
+        .row .field { flex:1; }
+        label { font-size:13px; font-weight:500; color:var(--primary-text-color,#212121); }
+        .hint { font-size:11px; color:var(--secondary-text-color,#727272); }
+        input[type=text], input[type=number], select {
+          padding:9px 11px; border-radius:8px; border:1px solid var(--divider-color,#e0e0e0);
+          background:var(--card-background-color,#fff); color:var(--primary-text-color,#212121);
+          font-size:13px; outline:none; box-sizing:border-box; width:100%; }
+        input[type=text]:focus, input[type=number]:focus, select:focus {
+          border-color:var(--primary-color,#03a9f4); }
+        .toggle-row { display:flex; align-items:center; justify-content:space-between; padding:4px 0; }
+        .toggle-row label { flex:1; }
+        .load-btn {
+          width:100%; padding:9px 14px; border-radius:8px; border:none; cursor:pointer;
+          background:var(--primary-color,#03a9f4); color:#fff; font-size:13px; font-weight:500;
+          text-align:left; display:flex; align-items:center; gap:8px; }
+        .load-btn:hover { opacity:0.9; }
+        #entityList { display:flex; flex-direction:column; }
+        #pickerContainer { margin-top:4px; }
       </style>
       <div class="editor">
 
-        <div class="section">Entitäten</div>
-        <div class="toggle-row">
-          <label>Alle Batterien automatisch erkennen</label>
-          <input type="checkbox" id="auto_add" ${c.auto_add ? 'checked' : ''} />
-        </div>
-        <div class="hint" id="modeHint">
-          ${c.auto_add
-            ? 'Alle Sensoren mit device_class: battery werden automatisch angezeigt. Einzelne können ausgeblendet werden.'
-            : 'Nur manuell hinzugefügte Sensoren werden angezeigt.'}
-        </div>
+        <div class="section">Ger&auml;te</div>
+
+        <button class="load-btn" id="loadAllBtn">
+          <ha-icon icon="mdi:battery-sync" style="--mdc-icon-size:18px;"></ha-icon>
+          <span id="loadAllLabel">Alle Batterien automatisch laden</span>
+        </button>
+        <div class="hint">L&auml;dt alle Sensoren mit device_class: battery in die Liste.</div>
+
         <div id="entityList"></div>
         <div id="pickerContainer"></div>
 
-        <div class="section">Filter & Sortierung</div>
+        <div class="section">Filter &amp; Sortierung</div>
         <div class="row">
           <div class="field">
             <label>Nur anzeigen unter (%)</label>
@@ -550,19 +527,19 @@ class BatteryCardEditor extends HTMLElement {
           <div class="field">
             <label>Sortierung</label>
             <select id="sort">
-              <option value="asc"  ${c.sort==='asc'  ?'selected':''}>Niedrigster zuerst</option>
-              <option value="desc" ${c.sort==='desc' ?'selected':''}>Höchster zuerst</option>
-              <option value="name" ${c.sort==='name' ?'selected':''}>Alphabetisch</option>
+              <option value="asc"  ${(c.sort||'asc')==='asc'  ?'selected':''}>Niedrigster zuerst</option>
+              <option value="desc" ${(c.sort||'asc')==='desc' ?'selected':''}>H&ouml;chster zuerst</option>
+              <option value="name" ${(c.sort||'asc')==='name' ?'selected':''}>Alphabetisch</option>
             </select>
           </div>
         </div>
 
         <div class="section">Darstellung</div>
         <div class="toggle-row">
-          <label>Kopfzeile anzeigen (Titel + Zähler)</label>
-          <input type="checkbox" id="show_header" ${c.show_header ? 'checked' : ''} />
+          <label>Kopfzeile anzeigen (Titel + Z&auml;hler)</label>
+          <input type="checkbox" id="show_header" ${c.show_header !== false ? 'checked' : ''} />
         </div>
-        <div id="titleField" style="${c.show_header ? '' : 'display:none'}">
+        <div id="titleField" style="${c.show_header !== false ? '' : 'display:none'}">
           <div class="field" style="margin-top:4px;">
             <label>Titel</label>
             <input type="text" id="title" value="${c.title || 'Batterien'}" placeholder="Batterien" />
@@ -576,42 +553,41 @@ class BatteryCardEditor extends HTMLElement {
           <div class="field">
             <label>Spalten</label>
             <select id="columns">
-              <option value="1" ${c.columns===1?'selected':''}>1 Spalte</option>
-              <option value="2" ${c.columns===2?'selected':''}>2 Spalten</option>
-              <option value="3" ${c.columns===3?'selected':''}>3 Spalten</option>
+              <option value="1" ${(c.columns||1)===1?'selected':''}>1 Spalte</option>
+              <option value="2" ${(c.columns||1)===2?'selected':''}>2 Spalten</option>
+              <option value="3" ${(c.columns||1)===3?'selected':''}>3 Spalten</option>
             </select>
           </div>
           <div class="field">
-            <label>Max. Höhe (px, 0 = unbegrenzt)</label>
+            <label>Max. H&ouml;he (px, 0 = unbegrenzt)</label>
             <input type="number" id="max_height" value="${c.max_height || 0}" min="0" step="10" />
           </div>
         </div>
         <div class="row">
           <div class="field">
             <label>Eckenradius (px)</label>
-            <input type="number" id="border_radius" value="${c.border_radius}" min="0" max="40" />
+            <input type="number" id="border_radius" value="${c.border_radius ?? 16}" min="0" max="40" />
           </div>
           <div class="field">
-            <label>Icon-Größe (px)</label>
-            <input type="number" id="icon_size" value="${c.icon_size}" min="14" max="40" />
+            <label>Icon-Gr&ouml;&szlig;e (px)</label>
+            <input type="number" id="icon_size" value="${c.icon_size ?? 22}" min="14" max="40" />
           </div>
         </div>
 
       </div>
     `;
 
-    this._renderEntityList();
-    if (!c.auto_add) this._buildBatteryPicker(root.getElementById('pickerContainer'));
+    this._updateEntityList();
+    this._updatePicker();
 
-    root.getElementById('auto_add').addEventListener('change', e => {
-      this._config = { ...this._config, auto_add: e.target.checked };
+    // "Alle laden"-Button
+    root.getElementById('loadAllBtn').addEventListener('click', () => {
+      if (!this._hass) return;
+      const allIds = getAllBatteryEntities(this._hass);
+      this._config = { ...this._config, entities: allIds, auto_add: false };
       this._emit();
-      root.getElementById('modeHint').textContent = e.target.checked
-        ? 'Alle Sensoren mit device_class: battery werden automatisch angezeigt. Einzelne können ausgeblendet werden.'
-        : 'Nur manuell hinzugefügte Sensoren werden angezeigt.';
-      root.getElementById('pickerContainer').innerHTML = '';
-      if (!e.target.checked) this._buildBatteryPicker(root.getElementById('pickerContainer'));
-      this._renderEntityList();
+      this._updateEntityList();
+      this._updatePicker();
     });
 
     root.getElementById('show_header').addEventListener('change', e => {
@@ -619,29 +595,38 @@ class BatteryCardEditor extends HTMLElement {
       this._emit();
       root.getElementById('titleField').style.display = e.target.checked ? '' : 'none';
     });
-
-    root.getElementById('title')?.addEventListener('change', e => {
-      this._config = { ...this._config, title: e.target.value }; this._emit();
+    root.getElementById('title').addEventListener('change', e => {
+      this._config = { ...this._config, title: e.target.value };
+      this._emit();
     });
     root.getElementById('show_bar').addEventListener('change', e => {
-      this._config = { ...this._config, show_bar: e.target.checked }; this._emit();
+      this._config = { ...this._config, show_bar: e.target.checked };
+      this._emit();
     });
     root.getElementById('sort').addEventListener('change', e => {
-      this._config = { ...this._config, sort: e.target.value }; this._emit();
+      this._config = { ...this._config, sort: e.target.value };
+      this._emit();
     });
     root.getElementById('columns').addEventListener('change', e => {
-      this._config = { ...this._config, columns: parseInt(e.target.value) }; this._emit();
+      this._config = { ...this._config, columns: parseInt(e.target.value) };
+      this._emit();
     });
-    [['border_radius', parseInt], ['icon_size', parseInt], ['max_height', parseInt]].forEach(([id, fn]) => {
-      root.getElementById(id)?.addEventListener('change', e => {
-        this._config = { ...this._config, [id]: fn(e.target.value) }; this._emit();
-      });
+    root.getElementById('max_height').addEventListener('change', e => {
+      this._config = { ...this._config, max_height: parseInt(e.target.value) || 0 };
+      this._emit();
     });
-    root.getElementById('min_level_filter')?.addEventListener('change', e => {
+    root.getElementById('border_radius').addEventListener('change', e => {
+      this._config = { ...this._config, border_radius: parseInt(e.target.value) };
+      this._emit();
+    });
+    root.getElementById('icon_size').addEventListener('change', e => {
+      this._config = { ...this._config, icon_size: parseInt(e.target.value) };
+      this._emit();
+    });
+    root.getElementById('min_level_filter').addEventListener('change', e => {
       const v = e.target.value.trim();
-      const cfg = { ...this._config };
-      cfg.min_level_filter = v === '' ? null : parseFloat(v);
-      this._config = cfg; this._emit();
+      this._config = { ...this._config, min_level_filter: v === '' ? null : parseFloat(v) };
+      this._emit();
     });
   }
 }
