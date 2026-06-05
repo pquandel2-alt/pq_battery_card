@@ -1,3 +1,4 @@
+// @ts-check
 // =====================================================================
 //  Battery Card v1.0.4
 // =====================================================================
@@ -42,6 +43,7 @@ class BatteryCard extends HTMLElement {
     this._lastKey = null;
   }
 
+  /** @param {LovelaceCardConfig} config */
   setConfig(config) {
     if (!config) throw new Error('Keine Konfiguration');
     this._config = {
@@ -61,6 +63,8 @@ class BatteryCard extends HTMLElement {
     delete this._lastKey;
   }
 
+  /** @param {HomeAssistant} hass */
+  /** @param {HomeAssistant} hass */
   set hass(hass) { this._hass = hass; this._render(); }
 
   _getBatteries() {
@@ -287,8 +291,9 @@ class BatteryCardEditor extends HTMLElement {
     this._rendered = false;
   }
 
+  /** @param {LovelaceCardConfig} config */
   setConfig(config) {
-    this._config = { ...config };
+    this._config = { entities: [], ...config };
     if (!Array.isArray(this._config.entities)) this._config.entities = [];
     if (this._rendered) {
       this._updateEntityList();
@@ -298,6 +303,7 @@ class BatteryCardEditor extends HTMLElement {
     }
   }
 
+  /** @param {HomeAssistant} hass */
   set hass(hass) {
     this._hass = hass;
     if (!this._rendered) {
@@ -394,7 +400,7 @@ class BatteryCardEditor extends HTMLElement {
         return (isNaN(la) ? 999 : la) - (isNaN(lb) ? 999 : lb);
       });
 
-    const picker = document.createElement('ha-entity-picker');
+    const picker = /** @type {HaEntityPicker} */ (document.createElement('ha-entity-picker'));
     picker.hass = this._hass;
     picker.value = '';
     picker.setAttribute('allow-custom-entity', '');
@@ -402,7 +408,7 @@ class BatteryCardEditor extends HTMLElement {
     picker.entityFilter = stateObj =>
       stateObj.attributes.device_class === 'battery' && !current.includes(stateObj.entity_id);
     picker.addEventListener('value-changed', e => {
-      const id = e.detail.value;
+      const id = (/** @type {CustomEvent} */ (e)).detail.value;
       if (!id) return;
       picker.value = '';
       this._config = { ...this._config, entities: [...this._getEntities(), id] };
@@ -531,40 +537,40 @@ class BatteryCardEditor extends HTMLElement {
     });
 
     root.getElementById('show_header').addEventListener('change', e => {
-      this._config = { ...this._config, show_header: e.target.checked };
+      this._config = { ...this._config, show_header: (/** @type {HTMLInputElement} */ (e.target)).checked };
       this._emit();
-      root.getElementById('titleField').style.display = e.target.checked ? '' : 'none';
+      root.getElementById('titleField').style.display = (/** @type {HTMLInputElement} */ (e.target)).checked ? '' : 'none';
     });
     root.getElementById('title').addEventListener('change', e => {
-      this._config = { ...this._config, title: e.target.value };
+      this._config = { ...this._config, title: (/** @type {HTMLInputElement} */ (e.target)).value };
       this._emit();
     });
     root.getElementById('show_bar').addEventListener('change', e => {
-      this._config = { ...this._config, show_bar: e.target.checked };
+      this._config = { ...this._config, show_bar: (/** @type {HTMLInputElement} */ (e.target)).checked };
       this._emit();
     });
     root.getElementById('sort').addEventListener('change', e => {
-      this._config = { ...this._config, sort: e.target.value };
+      this._config = { ...this._config, sort: (/** @type {HTMLInputElement} */ (e.target)).value };
       this._emit();
     });
     root.getElementById('columns').addEventListener('change', e => {
-      this._config = { ...this._config, columns: parseInt(e.target.value) };
+      this._config = { ...this._config, columns: parseInt((/** @type {HTMLInputElement} */ (e.target)).value) };
       this._emit();
     });
     root.getElementById('max_height').addEventListener('change', e => {
-      this._config = { ...this._config, max_height: parseInt(e.target.value) || 0 };
+      this._config = { ...this._config, max_height: parseInt((/** @type {HTMLInputElement} */ (e.target)).value) || 0 };
       this._emit();
     });
     root.getElementById('border_radius').addEventListener('change', e => {
-      this._config = { ...this._config, border_radius: parseInt(e.target.value) };
+      this._config = { ...this._config, border_radius: parseInt((/** @type {HTMLInputElement} */ (e.target)).value) };
       this._emit();
     });
     root.getElementById('icon_size').addEventListener('change', e => {
-      this._config = { ...this._config, icon_size: parseInt(e.target.value) };
+      this._config = { ...this._config, icon_size: parseInt((/** @type {HTMLInputElement} */ (e.target)).value) };
       this._emit();
     });
     root.getElementById('min_level_filter').addEventListener('change', e => {
-      const v = e.target.value.trim();
+      const v = (/** @type {HTMLInputElement} */ (e.target)).value.trim();
       this._config = { ...this._config, min_level_filter: v === '' ? null : parseFloat(v) };
       this._emit();
     });
